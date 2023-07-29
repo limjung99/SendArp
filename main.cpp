@@ -9,8 +9,10 @@
 #include <vector>
 #include <map>
 #include <stdint.h>
-#include <iomanip>
+#include <ifaddrs.h>
+#include <sys/socket.h>
 #define BUFFSIZE 4096
+#define INET4_SIZE 1024
 using namespace std;
 
 #pragma pack(push, 1)
@@ -21,7 +23,7 @@ struct EthArpPacket final {
 #pragma pack(pop)
 
 void usage() {
-	printf("syntax: send-arp-test <interface> <sender-ip> <target-ip>\n");
+	printf("syntax: send-arp-test <interface> [<sender-ip> <target-ip>] ...\n");
 	printf("sample: send-arp-test wlan0 1.1.1.2 1.1.1.1\n");
 }
 
@@ -87,16 +89,7 @@ class Arpspoofer{
 		}
 };
 
-string hextoIp(const u_char* packet){
-	string mac="";
-	for(int i=0;i<6;i++){
-		std::stringstream stream;
-		stream << hex << setfill('0') << setw(2) << static_cast<int>(packet[i]);
-		mac += stream.str();
-		if(i<5) mac += ':';
-	}
-	return mac;
-}
+
 
 int main(int argc, char* argv[]) {
 	//인자가 적을경우 종료 
@@ -120,9 +113,46 @@ int main(int argc, char* argv[]) {
 	ifs>>my_mac_addr;
 	ifs.close();
 	//나의 ip주소 구하기
+	struct ifaddrs* ifAddrList = nullptr;
+    struct ifaddrs* ifa = nullptr;
+	char ipAddress[INET6_ADDRSTRLEN];
+    // getifaddrs() 함수를 사용하여 네트워크 인터페이스 목록을 가져옵니다.
+    if (getifaddrs(&ifAddrList) == -1) {
+        std::cerr << "Failed to get interface list" << std::endl;
+        return 1;
+    }
 
+    // 인터페이스 목록을 순회하면서 IP 주소를 확인합니다.
+    for (ifa = ifAddrList; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr) {
+            continue;
+        }
+
+        // 해당 인터페이스의 이름이 "ens33"인 경우에만 처리합니다.
+        if (strcmp(ifa->ifa_name, dev) == 0) {
+            // AF_INET 또는 AF_INET6 주소만 고려합니다.
+            if (ifa->ifa_addr->sa_family == AF_INET || ifa->ifa_addr->sa_family == AF_INET6) {
+                
+                void* addrPtr;
+
+                if (ifa->ifa_addr->sa_family == AF_INET) {
+                    addrPtr = &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr;
+                } else {
+                    addrPtr = &((struct sockaddr_in6*)ifa->ifa_addr)->sin6_addr;
+                }
+
+                // IP 주소를 문자열로 변환합니다.
+                inet_ntop(ifa->ifa_addr->sa_family, addrPtr, ipAddress, INET6_ADDRSTRLEN);
+
+                break; // ens33 인터페이스를 찾았으므로 루프를 빠져나갑니다.
+            }
+        }
+    }
+    // 메모리 해제
+    freeifaddrs(ifAddrList);
+	
 	//Mac과 Ip로 초기화
-	Arpspoofer arpspoofer = Arpspoofer(my_mac_addr,/*Ip*/);
+	Arpspoofer arpspoofer = Arpspoofer(Mac(my_mac_addr),Ip(ipAddress));
 	
 	for(int i=2;i<argc;i++){
 		string tmp(argv[i]);
@@ -140,7 +170,7 @@ int main(int argc, char* argv[]) {
 		Ip sender_ip = arpspoofer.getSenderIp(i);
 		Ip target_ip = arpspoofer.getTargetIp(i);
 		//sender mac주소를 ARP 프로토콜로 Request 
-		arpspoofer.sendArpPacket(string(arpspoofer.getMac()),"ff:ff:ff:ff:ff:ff",string(arpspoofer.getIp()),"00:00:00:00:00:00",string(sender_ip),handle,ArpHdr::Request);
+		arpspoofer.sendArpPacket(string(arpspoofer.getMac()),"FF:FF:FF:FF:FF:FF",string(arpspoofer.getIp()),"00:00:00:00:00:00",string(sender_ip),handle,ArpHdr::Request);
 		//Sender ARP 응답패킷 캡쳐 
 		while(true){
 			struct pcap_pkthdr* header;
@@ -155,12 +185,10 @@ int main(int argc, char* argv[]) {
 			Ip sip_ = arphdr->sip_;
 			Mac tmac_ = arphdr->tmac_;
 			Ip tip_=arphdr->tip_;
-
-			
 		}
 		
 		//target mac주소를 ARP 프로토콜로 Request 
-		arpspoofer.sendArpPacket(string(arpspoofer.getMac()),"ff:ff:ff:ff:ff:ff",string(arpspoofer.getIp()),"00:00:00:00:00:00",string(target_ip),handle,ArpHdr::Request);
+		arpspoofer.sendArpPacket(string(arpspoofer.getMac()),"FF:FF:FF:FF:FF:FF",string(arpspoofer.getIp()),"00:00:00:00:00:00",string(target_ip),handle,ArpHdr::Request);
 		//Target ARP 응답패킷 캡쳐 
 		while(true){
 			struct pcap_pkthdr* header;
