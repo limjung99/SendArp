@@ -1,9 +1,11 @@
 LDLIBS=-lpcap
+CPPFLAGS=-g
+LDFLAGS=-g
 
 all: send-arp-test
 
 
-main.o: mac.h ip.h ethhdr.h arphdr.h main.cpp
+main.o: mac.h ip.h ethhdr.h arphdr.h mylibnet.h main.cpp
 
 arphdr.o: mac.h ip.h arphdr.h arphdr.cpp
 
